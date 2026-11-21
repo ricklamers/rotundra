@@ -1,0 +1,927 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#081a1c">
+<title>Rotunda: a WebGPU gallery for fal images</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=Schibsted+Grotesk:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+:root{
+  --ink:#081a1c; --deep:#0e2b2e; --bone:#efe8da; --brass:#c8a45a; --mist:#9db5b1;
+  --line:rgba(239,232,218,.16); --panel:rgba(8,26,28,.80);
+  --serif:"Instrument Serif","Iowan Old Style",Georgia,serif;
+  --sans:"Schibsted Grotesk",system-ui,-apple-system,"Segoe UI",sans-serif;
+  --kb:0px;
+}
+*{box-sizing:border-box}
+html,body{height:100%;margin:0;background:var(--ink);color:var(--bone);font-family:var(--sans);
+  -webkit-font-smoothing:antialiased;overflow:hidden;overscroll-behavior:none}
+button,input,select,textarea{font:inherit;color:inherit}
+button{cursor:pointer}
+:focus-visible{outline:2px solid var(--bone);outline-offset:2px}
+
+#gpu{position:fixed;inset:0;width:100%;height:100%;display:block;touch-action:none;outline:none;cursor:grab}
+#gpu.dragging{cursor:grabbing}
+#gpu.pointing{cursor:pointer}
+
+.top{position:fixed;top:0;left:0;right:0;display:flex;align-items:baseline;gap:12px;
+  padding:calc(env(safe-area-inset-top) + 14px) calc(env(safe-area-inset-right) + 16px) 28px calc(env(safe-area-inset-left) + 18px);
+  background:linear-gradient(rgba(8,26,28,.72),rgba(8,26,28,0));pointer-events:none}
+.top h1{font-family:var(--serif);font-weight:400;font-size:30px;line-height:1;margin:0;letter-spacing:.01em}
+.top #count{font-size:13px;color:var(--mist)}
+.top button{margin-left:auto;pointer-events:auto}
+
+.quiet{background:rgba(8,26,28,.55);border:1px solid var(--line);border-radius:999px;padding:8px 14px;font-size:13px;
+  -webkit-backdrop-filter:blur(12px);backdrop-filter:blur(12px)}
+.quiet:hover{border-color:rgba(239,232,218,.4)}
+
+.panel{position:fixed;left:50%;transform:translateX(-50%);width:min(720px,calc(100% - 20px));
+  bottom:calc(max(10px,env(safe-area-inset-bottom)) + var(--kb));
+  background:var(--panel);border:1px solid var(--line);border-radius:22px;
+  -webkit-backdrop-filter:blur(20px) saturate(1.2);backdrop-filter:blur(20px) saturate(1.2);
+  box-shadow:0 18px 50px rgba(2,10,11,.55)}
+.panel[hidden]{display:none}
+
+/* compose dock */
+.dock{padding:12px;display:grid;gap:10px}
+.models{display:flex;gap:8px;overflow-x:auto;scrollbar-width:none;margin:0 -12px;padding:2px 12px}
+.models::-webkit-scrollbar{display:none}
+.chip{flex:none;display:flex;align-items:center;gap:8px;padding:8px 13px 8px 10px;border-radius:999px;
+  border:1px solid var(--line);background:transparent;font-size:13.5px;color:var(--mist);white-space:nowrap}
+.chip i{width:12px;height:12px;border-radius:50%;border:2px solid var(--c);flex:none}
+.chip[aria-pressed="true"]{color:var(--bone);background:rgba(239,232,218,.09);border-color:rgba(239,232,218,.34)}
+.chip[aria-pressed="true"] i{background:var(--c)}
+#prompt{width:100%;resize:none;border:0;background:rgba(239,232,218,.07);border-radius:14px;padding:13px 14px;
+  font-family:var(--serif);font-size:21px;line-height:1.25;max-height:5.2em;min-height:52px;display:block}
+#prompt::placeholder{color:rgba(157,181,177,.75);font-style:italic}
+.actions{display:flex;align-items:center;gap:10px}
+.shape{display:flex;align-items:center;gap:8px;font-size:13px;color:var(--mist)}
+.shape select{appearance:none;-webkit-appearance:none;background:rgba(239,232,218,.07) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M1 1l4 4 4-4' fill='none' stroke='%239db5b1' stroke-width='1.5'/%3E%3C/svg%3E") no-repeat right 11px center;
+  border:1px solid transparent;border-radius:10px;padding:9px 28px 9px 12px;color:var(--bone);font-size:14px}
+.primary{margin-left:auto;white-space:nowrap;background:var(--brass);color:#1c1606;border:0;border-radius:13px;padding:12px 18px;font-weight:600;font-size:15px}
+.primary:hover{background:#d6b56e}
+.primary:active{transform:translateY(1px)}
+
+/* wall label for the focused image */
+.placard{padding:16px 16px 12px}
+.placard-head{display:flex;align-items:center;gap:9px;font-size:13.5px;white-space:nowrap}
+.placard-head strong{overflow:hidden;text-overflow:ellipsis;font-weight:600}
+.placard-head i{width:12px;height:12px;border-radius:50%;background:var(--c);flex:none}
+.placard-head time{color:var(--mist)}
+.placard-head button{margin-left:auto}
+#pPrompt{font-family:var(--serif);font-size:22px;line-height:1.25;margin:12px 0 14px;max-height:5em;overflow:auto;max-width:60ch}
+.placard-actions{display:flex;flex-wrap:wrap;gap:8px}
+.placard-actions>*{background:rgba(239,232,218,.08);border:1px solid transparent;border-radius:11px;padding:10px 13px;font-size:14px;text-decoration:none;color:var(--bone)}
+.placard-actions>*:hover{border-color:var(--line)}
+.placard-actions .danger{margin-left:auto;color:#ffb3a6}
+.placard-actions [aria-disabled="true"]{opacity:.4;pointer-events:none}
+
+#toast{position:fixed;left:50%;transform:translateX(-50%);bottom:calc(var(--dockh,220px) + 22px + var(--kb));
+  width:max-content;max-width:min(680px,calc(100% - 28px));background:rgba(8,26,28,.9);border:1px solid var(--line);
+  border-radius:12px;padding:10px 14px;font-size:14px;line-height:1.35;opacity:0;transition:opacity .25s;pointer-events:none}
+#toast.show{opacity:1}
+#toast.bad{border-color:rgba(255,150,130,.55)}
+
+.empty{position:fixed;left:0;right:0;top:20%;padding:0 24px;text-align:center;pointer-events:none}
+.empty[hidden]{display:none}
+.empty h2{font-family:var(--serif);font-weight:400;font-size:clamp(38px,9vw,64px);line-height:1;margin:0 0 12px}
+.empty p{margin:0 auto 20px;max-width:34ch;color:var(--mist);font-size:15px;line-height:1.45}
+.starters{display:flex;flex-direction:column;align-items:center;gap:8px}
+.starters button{pointer-events:auto;font-family:var(--serif);font-style:italic;font-size:18px;background:rgba(8,26,28,.5);
+  border:1px solid var(--line);border-radius:999px;padding:9px 16px;max-width:100%}
+.starters button:hover{border-color:rgba(239,232,218,.45)}
+
+dialog{background:#0c2427;color:var(--bone);border:1px solid var(--line);border-radius:22px;padding:22px;
+  width:min(460px,calc(100% - 24px));max-height:calc(100% - 24px)}
+dialog::backdrop{background:rgba(2,10,11,.6);-webkit-backdrop-filter:blur(4px);backdrop-filter:blur(4px)}
+dialog h2{font-family:var(--serif);font-weight:400;font-size:30px;margin:0 0 16px}
+dialog h3{font-size:14px;font-weight:600;margin:20px 0 8px}
+dialog label{display:block;font-size:13.5px;color:var(--mist);margin-bottom:6px}
+dialog input{width:100%;background:rgba(239,232,218,.07);border:1px solid var(--line);border-radius:11px;padding:11px 12px;font-size:15px}
+dialog .row{display:flex;gap:8px}
+dialog .row input{flex:1;min-width:0}
+dialog .hint{font-size:13px;color:var(--mist);line-height:1.45;margin:8px 0 0}
+dialog .btn{background:rgba(239,232,218,.08);border:1px solid var(--line);border-radius:11px;padding:10px 14px;font-size:14px;white-space:nowrap}
+dialog .btn.warn{color:#ffb3a6}
+dialog ul{list-style:none;margin:8px 0 0;padding:0;display:grid;gap:6px;font-size:14px}
+dialog li{display:flex;align-items:center;gap:8px}
+dialog li span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+dialog li button{margin-left:auto;background:none;border:0;color:var(--mist);text-decoration:underline;font-size:13px;padding:4px}
+dialog footer{display:flex;margin-top:22px}
+dialog footer .primary{padding:11px 22px}
+
+#nogpu{position:fixed;inset:0;display:grid;place-content:center;padding:28px;text-align:center;background:var(--ink)}
+#nogpu[hidden]{display:none}
+#nogpu h2{font-family:var(--serif);font-weight:400;font-size:38px;margin:0 0 10px}
+#nogpu p{color:var(--mist);max-width:38ch;margin:0 auto;line-height:1.5}
+
+@media (max-width:480px){
+  .top h1{font-size:26px}
+  #prompt{font-size:19px}
+  .primary{padding:12px 15px}
+  .shape span{position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%)}
+  .placard-actions .danger{margin-left:0}
+}
+@media (prefers-reduced-motion:reduce){ #toast{transition:none} }
+</style>
+</head>
+<body>
+<canvas id="gpu" tabindex="0" aria-label="Spiral gallery of generated images. Drag to walk the wall, tap an image to step closer."></canvas>
+
+<header class="top">
+  <h1>Rotunda</h1><span id="count"></span>
+  <button id="openSettings" class="quiet" type="button">Settings</button>
+</header>
+
+<section id="empty" class="empty" hidden>
+  <h2>The walls are bare</h2>
+  <p>Describe an image below. Every model you pick hangs its own version on this wall.</p>
+  <div class="starters">
+    <button type="button">A lighthouse keeper's kitchen at dawn, oil on linen</button>
+    <button type="button">Paper-cut diorama of a night market in the rain</button>
+    <button type="button">Frost on a red bicycle bell, macro photograph</button>
+  </div>
+</section>
+
+<div id="toast" role="status" aria-live="polite"></div>
+
+<form id="dock" class="panel dock" autocomplete="off">
+  <div class="models" id="models" role="group" aria-label="Models to generate with"></div>
+  <textarea id="prompt" rows="1" placeholder="Describe an image to hang" aria-label="Prompt" enterkeyhint="send"></textarea>
+  <div class="actions">
+    <label class="shape"><span>Shape</span>
+      <select id="shape">
+        <option value="1:1">Square</option>
+        <option value="3:4">Portrait 3:4</option>
+        <option value="4:3">Landscape 4:3</option>
+        <option value="16:9">Wide 16:9</option>
+        <option value="9:16">Tall 9:16</option>
+      </select>
+    </label>
+    <button type="submit" id="go" class="primary">Generate</button>
+  </div>
+</form>
+
+<aside id="placard" class="panel placard" hidden aria-label="About this image">
+  <div class="placard-head"><i id="pDot"></i><strong id="pModel"></strong><time id="pWhen"></time>
+    <button id="pClose" class="quiet" type="button">Close</button></div>
+  <p id="pPrompt"></p>
+  <div class="placard-actions">
+    <button id="pPrev" type="button">Previous</button>
+    <button id="pNext" type="button">Next</button>
+    <button id="pReuse" type="button">Use this prompt</button>
+    <a id="pOpen" target="_blank" rel="noopener">Open full size</a>
+    <button id="pRemove" type="button" class="danger">Remove</button>
+  </div>
+</aside>
+
+<dialog id="settings" aria-labelledby="setTitle">
+  <h2 id="setTitle">Settings</h2>
+  <label for="key">fal API key</label>
+  <div class="row"><input id="key" type="password" spellcheck="false" autocapitalize="off" autocomplete="off">
+    <button class="btn" id="keyShow" type="button">Show</button></div>
+  <p class="hint">Paste your fal key once. It is saved in this browser only, and requests go straight from here to fal.run.</p>
+
+  <h3>Add a model</h3>
+  <label for="mId">fal endpoint, such as fal-ai/flux/schnell</label>
+  <div class="row"><input id="mId" spellcheck="false" autocapitalize="off"><button class="btn" id="mAdd" type="button">Add model</button></div>
+  <ul id="mList"></ul>
+
+  <h3>Gallery</h3>
+  <button class="btn warn" id="clearAll" type="button">Remove all images</button>
+  <footer><button class="primary" id="setDone" type="button" autofocus>Done</button></footer>
+</dialog>
+
+<div id="nogpu" hidden>
+  <div><h2>This gallery needs WebGPU</h2>
+  <p id="nogpuMsg">This browser doesn't offer WebGPU. Open the file in a current Chrome, Edge or Safari.</p></div>
+</div>
+
+<script>
+(() => {
+'use strict';
+
+/* ---------------------------------------------------------------- config */
+const BUILT_IN_KEY = '';
+
+const RECRAFT_SIZE = {'1:1':'square_hd','3:4':'portrait_4_3','4:3':'landscape_4_3','16:9':'landscape_16_9','9:16':'portrait_16_9'};
+const BASE_MODELS = [
+  { id:'google/nano-banana-lite', name:'Nano Banana Lite', color:'#f4cf4e',
+    input:(p,ar)=>({prompt:p, aspect_ratio:ar, num_images:1, output_format:'jpeg'}) },
+  { id:'recraft/v4.1/flash/text-to-image', name:'Recraft 4.1 Flash', color:'#ff8a7a',
+    input:(p,ar)=>({prompt:p, image_size:RECRAFT_SIZE[ar]}) },
+  { id:'xai/grok-imagine-image', name:'Grok Imagine', color:'#a9d4ff',
+    input:(p,ar)=>({prompt:p, aspect_ratio:ar, num_images:1, output_format:'jpeg'}) },
+];
+const CUSTOM_COLOR = '#c9b6ff';
+
+// gallery geometry (world units)
+const R = 6, CELL_W = 2.5, CELL_H = 2.6, MAX_W = 2.0, MAX_H = 1.8, BORDER = 0.07;
+const DTH = CELL_W / R, TAU = Math.PI * 2;
+let ROWS = 2, RISE = ROWS * CELL_H + 1.6;      // one row on tall screens, two on wide ones
+const LABEL_W = 0.8, LABEL_H = 0.1875;           // half extents of the wall label
+const FOVY = 50 * Math.PI / 180, TAN_H = Math.tan(FOVY / 2);
+const MIN_DIST = 1.6, MAX_DIST = 11;
+
+const $ = id => document.getElementById(id);
+const canvas = $('gpu');
+const coarse = matchMedia('(pointer:coarse)').matches;
+const reducedMotion = matchMedia('(prefers-reduced-motion:reduce)').matches;
+const MAX_TEX = coarse ? 1024 : 2048;
+const NEAR_COLS = coarse ? 3.5 : 6.5, FAR_COLS = coarse ? 5.5 : 9.5;
+
+const store = {
+  get(k, d){ try{ const v = localStorage.getItem('rotunda.' + k); return v == null ? d : JSON.parse(v); }catch(e){ return d; } },
+  set(k, v){ try{ localStorage.setItem('rotunda.' + k, JSON.stringify(v)); }catch(e){} },
+};
+
+/* ---------------------------------------------------------------- state */
+let customModels = store.get('models', []);           // [{id,name}]
+let selected = new Set(store.get('selected', BASE_MODELS.map(m => m.id)));
+const items = [];                                     // images on the wall, oldest first
+let focusId = null, hoverId = null;
+const cam = { angle:0, tAngle:0, vel:0, dist:7, tDist:7, userDist:7, yOff:-0.23, tYOff:-0.23, shift:0, tShift:0, use:0.7 };
+
+const allModels = () => BASE_MODELS.concat(customModels.map(m => ({...m, color:CUSTOM_COLOR, input:p => ({prompt:p})})));
+const getKey = () => (store.get('key', '') || BUILT_IN_KEY).trim();
+const helixY = a => a / TAU * RISE;
+const hexRGB = h => [1,3,5].map(i => parseInt(h.slice(i, i + 2), 16) / 255);
+const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
+
+/* ---------------------------------------------------------------- DOM: models, toast, counts */
+function renderChips(){
+  const box = $('models'); box.textContent = '';
+  for(const m of allModels()){
+    const b = document.createElement('button');
+    b.type = 'button'; b.className = 'chip'; b.style.setProperty('--c', m.color);
+    b.setAttribute('aria-pressed', selected.has(m.id));
+    b.append(document.createElement('i'), m.name);
+    b.onclick = () => { selected.has(m.id) ? selected.delete(m.id) : selected.add(m.id);
+      store.set('selected', [...selected]); renderChips(); };
+    box.append(b);
+  }
+  const n = allModels().filter(m => selected.has(m.id)).length;
+  $('go').textContent = n > 1 ? `Generate ${n} images` : 'Generate image';
+  measureDock();
+}
+let toastTimer;
+function toast(msg, bad){
+  const t = $('toast'); t.textContent = msg; t.className = 'show' + (bad ? ' bad' : '');
+  clearTimeout(toastTimer); toastTimer = setTimeout(() => t.className = '', bad ? 7000 : 2600);
+}
+function refreshCount(){
+  const n = items.length;
+  $('count').textContent = n ? (n === 1 ? '1 image' : n + ' images') : '';
+  $('empty').hidden = n > 0;
+}
+function bottomPanel(){ return focusId ? $('placard') : $('dock'); }
+function measureDock(){
+  const h = bottomPanel().getBoundingClientRect().height || 0;
+  document.documentElement.style.setProperty('--dockh', h + 'px');
+  const H = Math.max(1, innerHeight), bottom = h + 14, top = $('count').getBoundingClientRect().bottom + 12;
+  cam.tShift = (bottom - top) / H; cam.use = Math.max(0.3, 1 - (bottom + top) / H);
+  if(autoDist && canvas.clientHeight){ cam.userDist = defaultDist(); if(!focusId) cam.tDist = cam.userDist; }
+}
+
+/* ---------------------------------------------------------------- tiny vector / matrix helpers */
+const dirOf = a => [Math.sin(a), 0, -Math.cos(a)];
+const rightOf = a => [Math.cos(a), 0, Math.sin(a)];
+function viewProj(eye, f, aspect, shift){
+  const r = [-f[2], 0, f[0]];                     // forward is horizontal, up is +y
+  const V = [ r[0],0,-f[0],0,  0,1,0,0,  r[2],0,-f[2],0,
+              -(r[0]*eye[0]+r[2]*eye[2]), -eye[1], f[0]*eye[0]+f[2]*eye[2], 1 ];
+  const n = 0.1, fa = 100, s = 1 / TAN_H;
+  const P = [ s/aspect,0,0,0,  0,s,0,0,  0,-shift,fa/(n-fa),-1,  0,0,fa*n/(n-fa),0 ];
+  const M = new Float32Array(16);
+  for(let c = 0; c < 4; c++) for(let rw = 0; rw < 4; rw++){
+    let v = 0; for(let k = 0; k < 4; k++) v += P[k*4+rw] * V[c*4+k];
+    M[c*4+rw] = v;
+  }
+  return M;
+}
+const camEye = () => { const d = dirOf(cam.angle), k = R - cam.dist; return [d[0]*k, helixY(cam.angle) + cam.yOff, d[2]*k]; };
+function rayAt(px, py){
+  const w = canvas.clientWidth, h = canvas.clientHeight, asp = w / h;
+  const x = (2*px/w - 1) * TAN_H * asp, y = (1 - 2*py/h - cam.shift) * TAN_H;
+  const f = dirOf(cam.angle), r = rightOf(cam.angle);
+  const d = [f[0] + r[0]*x, y, f[2] + r[2]*x], l = Math.hypot(d[0], d[1], d[2]);
+  return { o:camEye(), d:d.map(v => v / l) };
+}
+function pick(px, py){
+  const {o, d} = rayAt(px, py); let best = null, bt = 1e9;
+  for(const it of items){
+    const r = rightOf(it.a), n = [-r[2], 0, r[0]], c = [Math.sin(it.a)*R, it.y, -Math.cos(it.a)*R];
+    const dn = d[0]*n[0] + d[2]*n[2]; if(Math.abs(dn) < 1e-5) continue;
+    const t = ((c[0]-o[0])*n[0] + (c[2]-o[2])*n[2]) / dn; if(t <= 0 || t > bt) continue;
+    const hx = o[0]+d[0]*t - c[0], hz = o[2]+d[2]*t - c[2], lx = hx*r[0] + hz*r[2], ly = o[1]+d[1]*t - c[1];
+    if(Math.abs(lx) <= it.sx + BORDER && Math.abs(ly) <= it.sy + BORDER){ best = it; bt = t; }
+  }
+  return best;
+}
+
+/* ---------------------------------------------------------------- shaders */
+const WGSL_COMMON = /* wgsl */`
+struct Globals { viewProj: mat4x4f, camPos: vec3f, time: f32, view: vec4f, scene: vec4f };
+// view  = (camera angle, tan(fov/2), aspect, vertical lens shift)
+// scene = (lit columns, shimmer on/off, rise of one turn of the ramp, unused)
+@group(0) @binding(0) var<uniform> G: Globals;
+const R = ${R.toFixed(4)}; const DTH = ${DTH.toFixed(6)}; const TAU = 6.2831853;
+fn hash2(p: vec2f) -> f32 { return fract(sin(dot(p, vec2f(127.1, 311.7))) * 43758.5453); }
+`;
+
+const WGSL_WALL = WGSL_COMMON + /* wgsl */`
+struct VO { @builtin(position) pos: vec4f, @location(0) ndc: vec2f };
+@vertex fn vs(@builtin(vertex_index) i: u32) -> VO {
+  var p = array<vec2f, 3>(vec2f(-1, -1), vec2f(3, -1), vec2f(-1, 3));
+  var o: VO; o.pos = vec4f(p[i], 0, 1); o.ndc = p[i]; return o;
+}
+@fragment fn fs(in: VO) -> @location(0) vec4f {
+  // Ray-trace the inside of the rotunda: an endless cylinder with a helical ramp.
+  let a = G.view.x;
+  let fw = vec3f(sin(a), 0, -cos(a)); let rt = vec3f(cos(a), 0, sin(a));
+  let d = normalize(fw + rt * (in.ndc.x * G.view.y * G.view.z) + vec3f(0, 1, 0) * ((in.ndc.y - G.view.w) * G.view.y));
+  let o = G.camPos; let RW = R + 0.14; let RISE = G.scene.z; let hh = RISE * 0.5;
+  let A = max(dot(d.xz, d.xz), 1e-5); let B = dot(o.xz, d.xz); let C = dot(o.xz, o.xz) - RW * RW;
+  let t = (-B + sqrt(max(B * B - A * C, 0.0))) / A;
+  let p = o + d * t;
+  var da = atan2(p.x, -p.z) - a; da = da - TAU * round(da / TAU);
+  let aU = a + da;                               // unwrapped angle near the camera
+  let v = p.y - aU / TAU * RISE;
+  let lvl = round(v / RISE);
+  let vv = v - lvl * RISE;                       // height within this turn of the ramp
+  let cf = (aU + lvl * TAU) / DTH;               // column coordinate along the helix
+  let c = round(cf);
+  let dx = (cf - c) * DTH * R;
+
+  let base = vec3f(0.066, 0.160, 0.168);
+  let lit = step(-0.5, c) * step(c, G.scene.x - 0.5);
+  let pool = exp(-dx * dx / 1.5) * smoothstep(-hh + 0.1, -hh + 1.3, vv) * (1.0 - smoothstep(hh - 0.9, hh - 0.2, vv));
+  let wash = 0.55 + 0.45 * smoothstep(-hh + 0.8, hh - 1.0, vv);
+  var col = base * (0.40 + lit * pool * wash * 1.35);
+  col += (hash2(floor(vec2f(aU * R, p.y) * 46.0)) - 0.5) * 0.010;
+
+  // panel seams between hanging bays
+  let sw = fwidth(cf) * 1.2 + 0.003;
+  col *= 1.0 - 0.24 * (1.0 - smoothstep(0.0, sw, 0.5 - abs(cf - c)));
+
+  // the ramp edge between turns, with a brass rail
+  let bd = hh - abs(vv);
+  let lw = max(fwidth(p.y), 0.006);
+  let band = 1.0 - smoothstep(0.20, 0.20 + lw, bd);
+  col = mix(col, base * 0.22, band);
+  let rail = (1.0 - smoothstep(0.0, lw * 1.5, abs(bd - 0.215))) * step(vv, 0.0);
+  col = mix(col, vec3f(0.78, 0.64, 0.35) * (0.35 + 0.65 * lit * exp(-dx * dx / 2.5)), rail * 0.9);
+
+  let fog = 1.0 - exp(-max(t - 6.5, 0.0) * 0.055);
+  col = mix(col, vec3f(0.018, 0.048, 0.052), fog);
+  col *= 1.0 - 0.16 * dot(in.ndc, in.ndc);
+  col += (hash2(in.pos.xy) - 0.5) / 255.0;
+  return vec4f(col, 1);
+}
+`;
+
+const WGSL_ITEM = WGSL_COMMON + /* wgsl */`
+struct Item { center: vec3f, appear: f32, right: vec3f, loaded: f32, size: vec2f, hover: f32, seed: f32, accent: vec3f, state: f32 };
+@group(1) @binding(0) var<uniform> I: Item;
+@group(1) @binding(1) var tex: texture_2d<f32>;
+@group(1) @binding(2) var smp: sampler;
+const BORDER = ${BORDER.toFixed(3)}; const MARGIN = 0.5;
+struct VO { @builtin(position) pos: vec4f, @location(0) p: vec2f };
+const QUAD = array<vec2f, 6>(vec2f(-1,-1), vec2f(1,-1), vec2f(-1,1), vec2f(-1,1), vec2f(1,-1), vec2f(1,1));
+fn place(p: vec2f, lift: f32) -> vec4f {
+  let inward = vec3f(-I.right.z, 0, I.right.x);
+  let w = I.center + I.right * p.x + vec3f(0, 1, 0) * p.y + inward * lift;
+  return G.viewProj * vec4f(w, 1);
+}
+fn sdBox(p: vec2f, b: vec2f, r: f32) -> f32 {
+  let q = abs(p) - b + vec2f(r);
+  return length(max(q, vec2f(0))) + min(max(q.x, q.y), 0.0) - r;
+}
+
+// ---- framed picture
+@vertex fn vsFrame(@builtin(vertex_index) i: u32) -> VO {
+  let p = QUAD[i] * (I.size + vec2f(BORDER + MARGIN));
+  let sc = mix(0.88, 1.0, I.appear) * (1.0 + 0.035 * I.hover);
+  var o: VO; o.pos = place(p * sc, 0.04 + 0.14 * I.hover + (1.0 - I.appear) * 0.6); o.p = p; return o;
+}
+@fragment fn fsFrame(in: VO) -> @location(0) vec4f {
+  let p = in.p;
+  let uv = clamp(p / I.size * vec2f(0.5, -0.5) + 0.5, vec2f(0), vec2f(1));
+  let texel = textureSample(tex, smp, uv).rgb;
+  let dF = sdBox(p, I.size + vec2f(BORDER), 0.035);
+  let dI = sdBox(p, I.size, 0.012);
+  let aa = max(fwidth(dF), 1e-4);
+
+  // canvas while the model is still painting: a slow sweep in the model's colour
+  let busy = 1.0 - clamp(I.state, 0.0, 1.0);
+  let tt = G.time * G.scene.y;
+  let sweep = 0.5 + 0.5 * sin((p.x + p.y) * 2.2 - tt * 2.4 + I.seed * 6.283);
+  let breathe = 0.5 + 0.5 * sin(tt * 1.7 + I.seed * 9.0);
+  var blank = mix(vec3f(0.045, 0.11, 0.115), I.accent * 0.55, 0.10 + busy * (0.10 + 0.26 * sweep * sweep));
+  blank += I.accent * 0.07 * breathe * busy;
+  let hatch = step(0.5, fract((p.x - p.y) * 7.0));
+  let failed = vec3f(0.17, 0.075, 0.065) + 0.045 * hatch;
+  var img = mix(blank, texel, I.loaded);
+  img = mix(img, failed, clamp(I.state - 1.0, 0.0, 1.0));
+
+  let bone = vec3f(0.935, 0.905, 0.850);
+  let mat = bone * (0.74 + 0.26 * smoothstep(0.0, BORDER, dI));
+  let inImg = 1.0 - smoothstep(-aa, aa, dI);
+  let inFrame = 1.0 - smoothstep(-aa, aa, dF);
+  let col = mix(mat, img, inImg);
+
+  let edge = 1.0 - smoothstep(MARGIN * 0.55, MARGIN, dF);
+  let dS = sdBox(p + vec2f(0.0, 0.10), I.size + vec2f(BORDER), 0.035);
+  let shadow = 0.6 * exp(-max(dS, 0.0) * 6.0) * (1.0 - inFrame) * edge;
+  let glowAmt = 0.07 + 0.50 * I.hover + 0.30 * busy * (0.5 + 0.5 * breathe);
+  let glow = I.accent * exp(-max(dF, 0.0) * 8.0) * glowAmt * (1.0 - inFrame) * edge;
+  return vec4f((col * inFrame + glow) * I.appear, (inFrame + shadow) * I.appear);
+}
+
+// ---- wall label under each picture
+@vertex fn vsLabel(@builtin(vertex_index) i: u32) -> VO {
+  var o: VO; o.pos = place(QUAD[i] * I.size, 0.02 + (1.0 - I.appear) * 0.6); o.p = QUAD[i]; return o;
+}
+@fragment fn fsLabel(in: VO) -> @location(0) vec4f {
+  let texel = textureSample(tex, smp, in.p * vec2f(0.5, -0.5) + 0.5);
+  return texel * I.appear * (0.78 + 0.22 * I.hover);
+}
+`;
+
+const WGSL_MIP = /* wgsl */`
+struct VO { @builtin(position) pos: vec4f, @location(0) uv: vec2f };
+@group(0) @binding(0) var smp: sampler;
+@group(0) @binding(1) var src: texture_2d<f32>;
+@vertex fn vs(@builtin(vertex_index) i: u32) -> VO {
+  var p = array<vec2f, 3>(vec2f(-1, -1), vec2f(3, -1), vec2f(-1, 3));
+  var o: VO; o.pos = vec4f(p[i], 0, 1); o.uv = p[i] * vec2f(0.5, -0.5) + 0.5; return o;
+}
+@fragment fn fs(in: VO) -> @location(0) vec4f { return textureSample(src, smp, in.uv); }
+`;
+
+/* ---------------------------------------------------------------- WebGPU */
+let device, ctx, format, gBuf, gBG, iLayout, wallPipe, framePipe, labelPipe, sampler, blankTex, mipPipe, mipSampler;
+const gData = new Float32Array(28);
+
+async function initGPU(){
+  if(!navigator.gpu) throw new Error('nogpu');
+  const adapter = await navigator.gpu.requestAdapter({powerPreference:'high-performance'}) || await navigator.gpu.requestAdapter();
+  if(!adapter) throw new Error('noadapter');
+  device = await adapter.requestDevice();
+  device.lost.then(info => { if(info.reason !== 'destroyed') fatal('The graphics device was lost. Reload the page to rebuild the gallery.'); });
+  ctx = canvas.getContext('webgpu');
+  format = navigator.gpu.getPreferredCanvasFormat();
+  ctx.configure({device, format, alphaMode:'opaque'});
+
+  const gLayout = device.createBindGroupLayout({entries:[
+    {binding:0, visibility:GPUShaderStage.VERTEX | GPUShaderStage.FRAGMENT, buffer:{type:'uniform'}}]});
+  iLayout = device.createBindGroupLayout({entries:[
+    {binding:0, visibility:GPUShaderStage.VERTEX | GPUShaderStage.FRAGMENT, buffer:{type:'uniform'}},
+    {binding:1, visibility:GPUShaderStage.FRAGMENT, texture:{sampleType:'float'}},
+    {binding:2, visibility:GPUShaderStage.FRAGMENT, sampler:{type:'filtering'}}]});
+  gBuf = device.createBuffer({size:gData.byteLength, usage:GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST});
+  gBG = device.createBindGroup({layout:gLayout, entries:[{binding:0, resource:{buffer:gBuf}}]});
+
+  const wallMod = device.createShaderModule({code:WGSL_WALL});
+  const itemMod = device.createShaderModule({code:WGSL_ITEM});
+  const mipMod = device.createShaderModule({code:WGSL_MIP});
+  const premult = {color:{srcFactor:'one', dstFactor:'one-minus-src-alpha'}, alpha:{srcFactor:'one', dstFactor:'one-minus-src-alpha'}};
+  const itemLayout = device.createPipelineLayout({bindGroupLayouts:[gLayout, iLayout]});
+  [wallPipe, framePipe, labelPipe, mipPipe] = await Promise.all([
+    device.createRenderPipelineAsync({layout:device.createPipelineLayout({bindGroupLayouts:[gLayout]}),
+      vertex:{module:wallMod, entryPoint:'vs'}, fragment:{module:wallMod, entryPoint:'fs', targets:[{format}]}}),
+    device.createRenderPipelineAsync({layout:itemLayout,
+      vertex:{module:itemMod, entryPoint:'vsFrame'}, fragment:{module:itemMod, entryPoint:'fsFrame', targets:[{format, blend:premult}]}}),
+    device.createRenderPipelineAsync({layout:itemLayout,
+      vertex:{module:itemMod, entryPoint:'vsLabel'}, fragment:{module:itemMod, entryPoint:'fsLabel', targets:[{format, blend:premult}]}}),
+    device.createRenderPipelineAsync({layout:'auto',
+      vertex:{module:mipMod, entryPoint:'vs'}, fragment:{module:mipMod, entryPoint:'fs', targets:[{format:'rgba8unorm'}]}}),
+  ]);
+  sampler = device.createSampler({magFilter:'linear', minFilter:'linear', mipmapFilter:'linear', maxAnisotropy:8});
+  mipSampler = device.createSampler({magFilter:'linear', minFilter:'linear'});
+  blankTex = device.createTexture({size:[1,1], format:'rgba8unorm', usage:GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST});
+  device.queue.writeTexture({texture:blankTex}, new Uint8Array([0,0,0,0]), {}, [1,1]);
+}
+
+function textureFrom(source, w, h, premultiplied){
+  const levels = Math.floor(Math.log2(Math.max(w, h))) + 1;
+  const tex = device.createTexture({size:[w, h], format:'rgba8unorm', mipLevelCount:levels,
+    usage:GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST | GPUTextureUsage.RENDER_ATTACHMENT});
+  let copied = false;
+  if(!(source instanceof HTMLCanvasElement)){
+    try{ device.queue.copyExternalImageToTexture({source}, {texture:tex, premultipliedAlpha:premultiplied}, [w, h]); copied = true; }catch(e){}
+  }
+  if(!copied){                                   // read the pixels back and upload them directly
+    let g;
+    if(source instanceof HTMLCanvasElement) g = source.getContext('2d');
+    else{ const c = document.createElement('canvas'); c.width = w; c.height = h; g = c.getContext('2d', {willReadFrequently:true}); g.drawImage(source, 0, 0, w, h); }
+    const px = g.getImageData(0, 0, w, h).data;
+    if(premultiplied) for(let i = 0; i < px.length; i += 4){ const a = px[i+3] / 255; px[i] *= a; px[i+1] *= a; px[i+2] *= a; }
+    device.queue.writeTexture({texture:tex}, px, {bytesPerRow:w * 4, rowsPerImage:h}, [w, h]);
+  }
+  const enc = device.createCommandEncoder();
+  for(let l = 1; l < levels; l++){
+    const bg = device.createBindGroup({layout:mipPipe.getBindGroupLayout(0), entries:[
+      {binding:0, resource:mipSampler}, {binding:1, resource:tex.createView({baseMipLevel:l-1, mipLevelCount:1})}]});
+    const pass = enc.beginRenderPass({colorAttachments:[{view:tex.createView({baseMipLevel:l, mipLevelCount:1}), loadOp:'clear', storeOp:'store'}]});
+    pass.setPipeline(mipPipe); pass.setBindGroup(0, bg); pass.draw(3); pass.end();
+  }
+  device.queue.submit([enc.finish()]);
+  return tex;
+}
+
+/* ---------------------------------------------------------------- items */
+function labelTexture(it){
+  const c = document.createElement('canvas'); c.width = 640; c.height = 150;
+  const g = c.getContext('2d', {willReadFrequently:true});
+  g.fillStyle = it.color; g.beginPath(); g.arc(13, 33, 10, 0, TAU); g.fill();
+  g.fillStyle = '#efe8da'; g.font = '600 30px "Schibsted Grotesk", system-ui, sans-serif'; g.textBaseline = 'alphabetic';
+  g.fillText(it.modelName, 36, 44);
+  g.fillStyle = 'rgba(239,232,218,.74)'; g.font = 'italic 40px "Instrument Serif", Georgia, serif';
+  let s = it.prompt.replace(/\s+/g, ' ');
+  if(g.measureText(s).width > 628){ while(s.length > 1 && g.measureText(s + '…').width > 628) s = s.slice(0, -1); s = s.trimEnd() + '…'; }
+  g.fillText(s, 2, 104);
+  return textureFrom(c, c.width, c.height, true);
+}
+function setSize(it, aspect){
+  it.aspect = aspect;
+  if(aspect >= MAX_W / MAX_H){ it.tsx = MAX_W / 2; it.tsy = it.tsx / aspect; } else { it.tsy = MAX_H / 2; it.tsx = it.tsy * aspect; }
+  if(it.sx == null){ it.sx = it.tsx; it.sy = it.tsy; }
+}
+function rebind(it){
+  it.bg = device.createBindGroup({layout:iLayout, entries:[
+    {binding:0, resource:{buffer:it.ubuf}}, {binding:1, resource:(it.tex || blankTex).createView()}, {binding:2, resource:sampler}]});
+}
+function addItem(rec, fresh){
+  const it = { ...rec, state:rec.url ? 'ok' : 'busy', appear:fresh ? 0 : 1, loaded:0, hover:0, seed:Math.random(),
+    rgb:hexRGB(rec.color), tex:null, fetching:false, failedLoad:false,
+    u:new Float32Array(16), lu:new Float32Array(16) };
+  setSize(it, rec.aspect || 1);
+  it.ubuf = device.createBuffer({size:64, usage:GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST});
+  it.lbuf = device.createBuffer({size:64, usage:GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST});
+  it.ltex = labelTexture(it);
+  it.lbg = device.createBindGroup({layout:iLayout, entries:[
+    {binding:0, resource:{buffer:it.lbuf}}, {binding:1, resource:it.ltex.createView()}, {binding:2, resource:sampler}]});
+  rebind(it);
+  items.push(it); refreshCount();
+  return it;
+}
+function removeItem(it){
+  const i = items.indexOf(it); if(i < 0) return;
+  items.splice(i, 1);
+  if(focusId === it.id) unfocus();
+  const dead = [it.tex, it.ltex, it.ubuf, it.lbuf]; it.tex = null;
+  setTimeout(() => dead.forEach(r => r && r.destroy()), 200);   // after in-flight frames
+  save(); refreshCount();
+}
+function save(){
+  store.set('items', items.filter(i => i.state === 'ok' && i.url && !i.url.startsWith('data:'))
+    .map(({id, prompt, modelId, modelName, color, url, aspect, t}) => ({id, prompt, modelId, modelName, color, url, aspect, t})));
+}
+
+/* image → texture, a few at a time */
+let loading = 0; const loadQueue = [];
+function wantTexture(it){
+  if(it.tex || it.fetching || it.failedLoad || !it.url) return;
+  it.fetching = true; loadQueue.push(it); pump();
+}
+function pump(){
+  while(loading < 3 && loadQueue.length){
+    const it = loadQueue.shift(); loading++;
+    loadBitmap(it.url).then(bmp => {
+      if(!items.includes(it)){ bmp.close(); return; }
+      setSize(it, bmp.width / bmp.height);
+      it.tex = textureFrom(bmp, bmp.width, bmp.height, false); bmp.close(); rebind(it);
+    }).catch(() => { it.failedLoad = true; if(it.state === 'ok') it.state = 'failed';
+      if(it.fresh) toast(`${it.modelName} made an image, but it could not be loaded onto the wall. Open it from the image's label instead.`, true);
+    }).finally(() => { it.fetching = false; loading--; pump(); });
+  }
+}
+async function loadBitmap(url){
+  let src;
+  try{ const r = await fetch(url, {mode:'cors'}); if(!r.ok) throw 0; src = await r.blob(); }
+  catch(e){ src = await new Promise((ok, no) => { const im = new Image(); im.crossOrigin = 'anonymous'; im.onload = () => ok(im); im.onerror = no; im.src = url; }); }
+  let bmp = await createImageBitmap(src, {colorSpaceConversion:'default'});
+  const m = Math.max(bmp.width, bmp.height);
+  if(m > MAX_TEX){
+    const k = MAX_TEX / m, small = await createImageBitmap(bmp, {resizeWidth:Math.round(bmp.width*k), resizeHeight:Math.round(bmp.height*k), resizeQuality:'high'});
+    bmp.close(); bmp = small;
+  }
+  return bmp;
+}
+
+/* ---------------------------------------------------------------- fal */
+function falError(status, body){
+  const d = body && body.detail;
+  const detail = typeof d === 'string' ? d : Array.isArray(d) ? d.map(x => x.msg).filter(Boolean).join('; ') : body && (body.message || body.error);
+  if(status === 401) return 'fal did not accept the API key. Check it in Settings.';
+  if(status === 403) return detail || 'fal refused the request. The key may be out of credit or locked.';
+  if(status === 404) return 'fal has no model at this endpoint.';
+  if(status === 422) return 'fal rejected the request' + (detail ? ': ' + detail : '.');
+  if(status === 429) return 'fal is rate-limiting this key. Wait a moment, then generate again.';
+  return detail || `fal returned an error (${status}).`;
+}
+async function falRun(model, input){
+  let res;
+  try{
+    res = await fetch('https://fal.run/' + model.id, {method:'POST',
+      headers:{'Authorization':'Key ' + getKey(), 'Content-Type':'application/json'}, body:JSON.stringify(input)});
+  }catch(e){ throw new Error('Could not reach fal.run. Check the connection, then generate again.'); }
+  let body = null; try{ body = await res.json(); }catch(e){}
+  if(!res.ok) throw new Error(falError(res.status, body));
+  const img = body && (body.images && body.images[0] || body.image);
+  const url = img && (typeof img === 'string' ? img : img.url);
+  if(!url) throw new Error('fal answered without an image.');
+  return url;
+}
+let pending = 0;
+function generate(){
+  const ta = $('prompt'), prompt = ta.value.trim();
+  if(!prompt){ ta.focus(); toast('Write a prompt first.'); return; }
+  const models = allModels().filter(m => selected.has(m.id));
+  if(!models.length){ toast('Pick at least one model.'); return; }
+  if(!getKey()){ openSettings(); toast('Add your fal API key to generate.'); return; }
+  const ar = $('shape').value, [aw, ah] = ar.split(':').map(Number);
+  unfocus();
+  const made = models.map(m => {
+    const it = addItem({id:uid(), prompt, modelId:m.id, modelName:m.name, color:m.color, url:'', aspect:aw/ah, t:Date.now()}, true);
+    it.fresh = true; return [m, it];
+  });
+  walkTo(items.indexOf(made[0][1]));
+  pending += made.length;
+  toast(made.length > 1 ? `Generating ${made.length} images…` : 'Generating image…');
+  let ok = 0, left = made.length;
+  for(const [m, it] of made){
+    falRun(m, m.input(prompt, ar)).then(url => {
+      it.url = url; it.state = 'ok'; ok++; save(); wantTexture(it);
+    }).catch(err => { removeItem(it); toast(`${m.name}: ${err.message}`, true); })
+      .finally(() => { pending--; if(--left === 0 && ok) setTimeout(() => { if(!$('toast').classList.contains('bad')) toast(ok > 1 ? `${ok} images added` : 'Image added'); }, 50); });
+  }
+}
+
+/* ---------------------------------------------------------------- camera + focus */
+const colOf = i => Math.floor(i / ROWS);
+function usable(){ return cam.use; }
+function setRows(n){
+  if(n === ROWS) return;
+  const idx = Math.round(cam.tAngle / DTH) * ROWS;
+  ROWS = n; RISE = ROWS * CELL_H + 1.6;
+  cam.angle = cam.tAngle = Math.max(0, colOf(Math.min(idx, items.length - 1))) * DTH; cam.vel = 0;
+  for(const it of items) it.a = null;               // snap to the new hanging plan
+}
+function defaultDist(){
+  const asp = canvas.clientWidth / Math.max(1, canvas.clientHeight);
+  const dv = (ROWS === 1 ? 1.34 : 2.95) / TAN_H / usable(), dh = (CELL_W * 0.62) / (TAN_H * asp);
+  return Math.min(MAX_DIST - 0.5, Math.max(dv, dh));
+}
+function fitDist(it){
+  const asp = canvas.clientWidth / Math.max(1, canvas.clientHeight);
+  return Math.max(MIN_DIST, (it.tsy + 0.42) / TAN_H / usable(), (it.tsx + 0.22) / (TAN_H * asp));
+}
+function walkTo(i){ cam.tAngle = colOf(i) * DTH; cam.vel = 0; }
+function focus(it){
+  focusId = it.id; cam.vel = 0;
+  $('dock').hidden = true; $('placard').hidden = false;
+  $('pDot').style.setProperty('--c', it.color);
+  $('pModel').textContent = it.modelName;
+  const when = new Date(it.t);
+  $('pWhen').textContent = when.toLocaleString(undefined, {day:'numeric', month:'short', hour:'numeric', minute:'2-digit'});
+  $('pWhen').dateTime = when.toISOString();
+  $('pPrompt').textContent = it.prompt;
+  const o = $('pOpen');
+  if(it.url && !it.url.startsWith('data:')){ o.href = it.url; o.removeAttribute('aria-disabled'); } else { o.removeAttribute('href'); o.setAttribute('aria-disabled', 'true'); }
+  measureDock();
+}
+function unfocus(){
+  if(!focusId) return;
+  focusId = null; $('placard').hidden = true; $('dock').hidden = false;
+  cam.tDist = cam.userDist; cam.tYOff = -0.23; measureDock();
+}
+const focused = () => focusId && items.find(i => i.id === focusId);
+function step(n){
+  const f = focused(); if(!f){ cam.tAngle += n * DTH; cam.vel = 0; return; }
+  const j = items.indexOf(f) + n; if(j >= 0 && j < items.length) focus(items[j]);
+}
+
+/* ---------------------------------------------------------------- input */
+const pts = new Map(); let drag = null, pinch = null, autoDist = true;
+function zoomTo(d){ autoDist = false; cam.userDist = cam.tDist = Math.min(MAX_DIST, Math.max(MIN_DIST + 0.6, d)); }
+canvas.addEventListener('pointerdown', e => {
+  canvas.setPointerCapture(e.pointerId);
+  pts.set(e.pointerId, {x:e.clientX, y:e.clientY});
+  if(pts.size === 1){ drag = {x:e.clientX, y:e.clientY, sx:e.clientX, sy:e.clientY, t:performance.now(), moved:false, v:0}; cam.vel = 0; }
+  else if(pts.size === 2){ const [a, b] = [...pts.values()]; unfocus(); pinch = {d:Math.hypot(a.x-b.x, a.y-b.y), dist:cam.tDist}; drag = null; }
+});
+canvas.addEventListener('pointermove', e => {
+  const p = pts.get(e.pointerId);
+  if(!p){ if(e.pointerType === 'mouse'){ const h = pick(e.clientX, e.clientY); hoverId = h ? h.id : null; canvas.classList.toggle('pointing', !!h); } return; }
+  p.x = e.clientX; p.y = e.clientY;
+  if(pinch && pts.size === 2){
+    const [a, b] = [...pts.values()];
+    zoomTo(pinch.dist * pinch.d / Math.max(20, Math.hypot(a.x-b.x, a.y-b.y)));
+    return;
+  }
+  if(!drag) return;
+  const dx = e.clientX - drag.x, dy = e.clientY - drag.y;
+  if(!drag.moved && Math.hypot(e.clientX - drag.sx, e.clientY - drag.sy) > 7){ drag.moved = true; unfocus(); canvas.classList.add('dragging'); hoverId = null; }
+  if(drag.moved){
+    const wpp = 2 * cam.dist * TAN_H / canvas.clientHeight, now = performance.now(), dA = -dx * wpp / R;
+    cam.tAngle += dA; const span = (ROWS - 1) * CELL_H / 2; cam.tYOff = Math.max(-span - 0.8, Math.min(span + 0.4, cam.tYOff + dy * wpp));
+    const dt = Math.max(1, now - drag.t) / 1000; drag.v = drag.v * 0.6 + (dA / dt) * 0.4; drag.t = now;
+  }
+  drag.x = e.clientX; drag.y = e.clientY;
+});
+function endPointer(e){
+  if(!pts.has(e.pointerId)) return;
+  pts.delete(e.pointerId);
+  if(pinch){ if(pts.size < 2) pinch = null; return; }
+  if(!drag) return;
+  if(drag.moved){ if(performance.now() - drag.t < 90) cam.vel = Math.max(-6, Math.min(6, drag.v)); }
+  else if(e.type === 'pointerup'){ const it = pick(e.clientX, e.clientY); if(it && it.id !== focusId) focus(it); else unfocus(); }
+  drag = null; canvas.classList.remove('dragging');
+}
+canvas.addEventListener('pointerup', endPointer);
+canvas.addEventListener('pointercancel', endPointer);
+canvas.addEventListener('pointerleave', () => { hoverId = null; });
+canvas.addEventListener('wheel', e => {
+  e.preventDefault();
+  const px = e.deltaMode === 1 ? 32 : 1;
+  if(e.ctrlKey){ unfocus(); zoomTo(cam.tDist * Math.exp(e.deltaY * px * 0.01)); return; }
+  const d = (Math.abs(e.deltaX) > Math.abs(e.deltaY) ? e.deltaX : e.deltaY) * px;
+  unfocus(); cam.vel = 0; cam.tAngle += d * 0.0016;
+}, {passive:false});
+addEventListener('keydown', e => {
+  const typing = /^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement.tagName) || $('settings').open;
+  if(e.key === 'Escape' && !$('settings').open){ unfocus(); return; }
+  if(typing) return;
+  if(e.key === 'ArrowRight'){ step(1); e.preventDefault(); }
+  else if(e.key === 'ArrowLeft'){ step(-1); e.preventDefault(); }
+  else if(e.key === '+' || e.key === '='){ unfocus(); zoomTo(cam.tDist * 0.85); }
+  else if(e.key === '-'){ unfocus(); zoomTo(cam.tDist / 0.85); }
+});
+
+/* ---------------------------------------------------------------- frame loop */
+let last = 0, cssW = 0, cssH = 0;
+function resize(){
+  const dpr = Math.min(devicePixelRatio || 1, 2);
+  cssW = canvas.clientWidth; cssH = canvas.clientHeight;
+  const w = Math.max(1, Math.min(device.limits.maxTextureDimension2D, Math.round(cssW * dpr)));
+  const h = Math.max(1, Math.min(device.limits.maxTextureDimension2D, Math.round(cssH * dpr)));
+  if(canvas.width !== w || canvas.height !== h){ canvas.width = w; canvas.height = h; }
+  measureDock();
+  setRows(cssW / Math.max(1, cssH) < 0.8 || cssH * cam.use < 430 ? 1 : 2);
+  measureDock();
+}
+
+function update(dt){
+  const ease = r => 1 - Math.exp(-dt * (reducedMotion ? 40 : r));
+  const n = items.length, maxA = Math.max(0, colOf(n - 1)) * DTH;
+
+  items.forEach((it, i) => {
+    const ta = colOf(i) * DTH, ty = helixY(ta) + ((ROWS - 1) / 2 - i % ROWS) * CELL_H;
+    if(it.a == null){ it.a = ta; it.y = ty; }
+    it.a += (ta - it.a) * ease(8); it.y += (ty - it.y) * ease(8);
+    it.sx += (it.tsx - it.sx) * ease(8); it.sy += (it.tsy - it.sy) * ease(8);
+    it.appear += (1 - it.appear) * ease(4.5);
+    it.loaded += ((it.tex ? 1 : 0) - it.loaded) * ease(3.5);
+    it.hover += ((it.id === hoverId || it.id === focusId ? 1 : 0) - it.hover) * ease(12);
+    // keep full textures only for the stretch of wall you are near
+    const far = Math.abs(it.a - cam.angle) / DTH;
+    if(it.state === 'ok'){
+      if(far < NEAR_COLS) wantTexture(it);
+      else if(far > FAR_COLS && it.tex && it.loaded > 0.99){ const t = it.tex; it.tex = null; it.loaded = 0; rebind(it); setTimeout(() => t.destroy(), 200); }
+    }
+  });
+
+  const f = focused();
+  if(f){ cam.tAngle = f.a; cam.tYOff = f.y - helixY(f.a) - 0.12; cam.tDist = fitDist(f); }
+  else if(!drag){
+    cam.tAngle += cam.vel * dt; cam.vel *= Math.exp(-dt * 3.2);
+    if(cam.tAngle < 0) cam.tAngle += (0 - cam.tAngle) * ease(9);
+    if(cam.tAngle > maxA) cam.tAngle += (maxA - cam.tAngle) * ease(9);
+  }
+  cam.tAngle = Math.max(-0.5, Math.min(maxA + 0.5, cam.tAngle));
+  cam.angle += (cam.tAngle - cam.angle) * ease(drag ? 30 : 7);
+  cam.dist += (cam.tDist - cam.dist) * ease(6);
+  cam.yOff += (cam.tYOff - cam.yOff) * ease(drag ? 30 : 6);
+  cam.shift += (cam.tShift - cam.shift) * ease(8);
+}
+
+function frame(now){
+  const dt = Math.min(0.05, (now - last) / 1000 || 0.016); last = now;
+  if(canvas.clientWidth !== cssW || canvas.clientHeight !== cssH) resize();
+  update(dt);
+
+  const asp = canvas.width / canvas.height, eye = camEye();
+  gData.set(viewProj(eye, dirOf(cam.angle), asp, cam.shift), 0);
+  gData.set([eye[0], eye[1], eye[2], now / 1000 % 3600], 16);
+  gData.set([cam.angle, TAN_H, asp, cam.shift], 20);
+  gData.set([Math.max(1, colOf(items.length - 1) + 1), reducedMotion ? 0 : 1, RISE, 0], 24);
+  device.queue.writeBuffer(gBuf, 0, gData);
+
+  const visible = [];
+  for(const it of items){
+    let d = it.a - cam.angle; d -= TAU * Math.round(d / TAU);
+    if(Math.abs(d) > 1.9) continue;
+    const r = rightOf(it.a), cx = Math.sin(it.a) * R, cz = -Math.cos(it.a) * R;
+    const st = it.state === 'busy' ? 0 : it.state === 'ok' ? 1 : 2;
+    it.u.set([cx, it.y, cz, it.appear, r[0], 0, r[2], it.loaded, it.sx, it.sy, it.hover, it.seed, it.rgb[0], it.rgb[1], it.rgb[2], st]);
+    device.queue.writeBuffer(it.ubuf, 0, it.u);
+    const lx = -(it.sx + BORDER) + LABEL_W, ly = it.y - (it.sy + BORDER + 0.09 + LABEL_H);
+    it.lu.set([cx + r[0]*lx, ly, cz + r[2]*lx, it.appear, r[0], 0, r[2], 1, LABEL_W, LABEL_H, it.hover, 0, 0, 0, 0, 1]);
+    device.queue.writeBuffer(it.lbuf, 0, it.lu);
+    visible.push(it);
+  }
+  visible.sort((a, b) => a.hover - b.hover);
+
+  const enc = device.createCommandEncoder();
+  const pass = enc.beginRenderPass({colorAttachments:[{view:ctx.getCurrentTexture().createView(),
+    loadOp:'clear', clearValue:{r:0.02, g:0.05, b:0.055, a:1}, storeOp:'store'}]});
+  pass.setBindGroup(0, gBG);
+  pass.setPipeline(wallPipe); pass.draw(3);
+  pass.setPipeline(labelPipe); for(const it of visible){ pass.setBindGroup(1, it.lbg); pass.draw(6); }
+  pass.setPipeline(framePipe); for(const it of visible){ pass.setBindGroup(1, it.bg); pass.draw(6); }
+  pass.end();
+  device.queue.submit([enc.finish()]);
+  requestAnimationFrame(frame);
+}
+
+/* ---------------------------------------------------------------- settings + wiring */
+function openSettings(){ $('key').value = getKey(); $('key').type = 'password'; $('keyShow').textContent = 'Show'; renderCustom(); resetClear(); $('settings').showModal(); }
+function renderCustom(){
+  const ul = $('mList'); ul.textContent = '';
+  for(const m of customModels){
+    const li = document.createElement('li'), s = document.createElement('span'), b = document.createElement('button');
+    s.textContent = m.id; b.type = 'button'; b.textContent = 'Remove';
+    b.onclick = () => { customModels = customModels.filter(x => x.id !== m.id); selected.delete(m.id);
+      store.set('models', customModels); store.set('selected', [...selected]); renderCustom(); renderChips(); };
+    li.append(s, b); ul.append(li);
+  }
+}
+let clearArmed = false;
+function resetClear(){ clearArmed = false; $('clearAll').textContent = 'Remove all images'; }
+function fatal(msg){ $('nogpuMsg').textContent = msg; $('nogpu').querySelector('h2').textContent = 'The gallery stopped'; $('nogpu').hidden = false; }
+
+function wire(){
+  $('dock').addEventListener('submit', e => { e.preventDefault(); generate(); });
+  const ta = $('prompt');
+  const grow = () => { ta.style.height = 'auto'; ta.style.height = Math.min(ta.scrollHeight, 110) + 'px'; measureDock(); };
+  ta.addEventListener('input', grow);
+  ta.addEventListener('keydown', e => { if(e.key === 'Enter' && !e.shiftKey && !e.isComposing){ e.preventDefault(); generate(); } });
+  document.querySelectorAll('.starters button').forEach(b => b.onclick = () => { ta.value = b.textContent; grow(); ta.focus(); });
+  $('shape').value = store.get('shape', '1:1');
+  $('shape').onchange = e => store.set('shape', e.target.value);
+
+  $('pClose').onclick = unfocus;
+  $('pPrev').onclick = () => step(-1);
+  $('pNext').onclick = () => step(1);
+  $('pReuse').onclick = () => { const f = focused(); if(f){ ta.value = f.prompt; unfocus(); grow(); ta.focus(); } };
+  $('pRemove').onclick = () => { const f = focused(); if(f){ removeItem(f); toast('Image removed'); } };
+
+  $('openSettings').onclick = openSettings;
+  $('keyShow').onclick = () => { const k = $('key'), show = k.type === 'password'; k.type = show ? 'text' : 'password'; $('keyShow').textContent = show ? 'Hide' : 'Show'; };
+  $('key').onchange = e => { const v = e.target.value.trim(); store.set('key', v === BUILT_IN_KEY ? '' : v); };
+  $('mAdd').onclick = () => {
+    const id = $('mId').value.trim().replace(/^https?:\/\/(fal\.run|fal\.ai\/models)\//, '').replace(/^\/+|\/+$/g, '');
+    if(!id || !/^[\w.\-]+(\/[\w.\-]+)+$/.test(id)){ $('mId').focus(); return; }
+    if(!allModels().some(m => m.id === id)){ customModels.push({id, name:id.split('/').slice(1).join(' ')}); store.set('models', customModels); }
+    selected.add(id); store.set('selected', [...selected]); $('mId').value = ''; renderCustom(); renderChips();
+  };
+  $('clearAll').onclick = () => {
+    if(!items.length) return;
+    if(!clearArmed){ clearArmed = true; $('clearAll').textContent = `Tap again to remove ${items.length === 1 ? '1 image' : items.length + ' images'}`; return; }
+    [...items].forEach(removeItem); cam.tAngle = 0; resetClear();
+  };
+  $('setDone').onclick = () => { $('key').onchange({target:$('key')}); $('settings').close(); };
+
+  // keep the dock above the on-screen keyboard
+  if(window.visualViewport){
+    const vv = visualViewport, fit = () => document.documentElement.style.setProperty('--kb', Math.max(0, innerHeight - vv.height - vv.offsetTop) + 'px');
+    vv.addEventListener('resize', fit); vv.addEventListener('scroll', fit);
+  }
+  new ResizeObserver(measureDock).observe($('dock'));
+}
+
+async function start(){
+  renderChips(); wire();
+  try{ await initGPU(); }
+  catch(e){
+    if(e.message !== 'nogpu') $('nogpuMsg').textContent = 'WebGPU is here but no graphics adapter answered. Try another browser, or switch on hardware acceleration.';
+    $('nogpu').hidden = false; $('dock').hidden = true; return;
+  }
+  // wall labels are drawn with the page fonts, so wait briefly for them
+  try{ await Promise.race([Promise.all([document.fonts.load('600 30px "Schibsted Grotesk"'), document.fonts.load('italic 40px "Instrument Serif"')]), new Promise(r => setTimeout(r, 1500))]); }catch(e){}
+  for(const rec of store.get('items', [])) if(rec && rec.url) addItem(rec, false);
+  refreshCount(); resize();
+  cam.angle = cam.tAngle = Math.max(0, colOf(items.length - 1)) * DTH;
+  cam.dist = cam.tDist; cam.shift = cam.tShift;
+  requestAnimationFrame(frame);
+}
+start();
+})();
+</script>
+</body>
+</html>
