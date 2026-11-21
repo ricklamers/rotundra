@@ -646,11 +646,12 @@ function generate(){
   if(!getKey()){ openSettings(); toast('Add your fal API key to generate.'); return; }
   const ar = $('shape').value, [aw, ah] = ar.split(':').map(Number);
   unfocus();
+  if(coarse){ ta.blur(); settleViewport(); }      // drop the on-screen keyboard so the wall is in view
   const made = models.map(m => {
     const it = addItem({id:uid(), prompt, modelId:m.id, modelName:m.name, color:m.color, url:'', aspect:aw/ah, t:Date.now()}, true);
     it.fresh = true; return [m, it];
   });
-  walkTo(items.indexOf(made[0][1]));
+  walkTo(items.indexOf(made[0][1]), true);
   pending += made.length;
   toast(made.length > 1 ? `Generating ${made.length} images…` : 'Generating image…');
   let ok = 0, left = made.length;
@@ -681,7 +682,19 @@ function fitDist(it){
   const asp = canvas.clientWidth / Math.max(1, canvas.clientHeight);
   return Math.max(MIN_DIST, (it.tsy + 0.42) / TAN_H / usable(), (it.tsx + 0.22) / (TAN_H * asp));
 }
-function walkTo(i){ cam.tAngle = colOf(i) * DTH; cam.vel = 0; }
+const HOME_Y = -0.23;                             // frame and its label sit centred at this offset
+function walkTo(i, reframe){
+  cam.tAngle = colOf(i) * DTH; cam.vel = 0;
+  if(reframe){                                    // undo any stray pan or close-up so the tile is centred and whole
+    cam.tYOff = HOME_Y;
+    const d = defaultDist();
+    if(cam.tDist < d - 0.05 || ROWS === 1){ autoDist = true; cam.userDist = cam.tDist = d; }
+  }
+}
+function settleViewport(){                        // iOS can leave the page nudged after the keyboard closes
+  if(window.scrollX || window.scrollY) window.scrollTo(0, 0);
+  if(document.scrollingElement) document.scrollingElement.scrollTop = 0;
+}
 function focus(it){
   focusId = it.id; cam.vel = 0;
   $('dock').hidden = true; $('placard').hidden = false;
@@ -698,7 +711,7 @@ function focus(it){
 function unfocus(){
   if(!focusId) return;
   focusId = null; $('placard').hidden = true; $('dock').hidden = false;
-  cam.tDist = cam.userDist; cam.tYOff = -0.23; measureDock();
+  cam.tDist = cam.userDist; cam.tYOff = HOME_Y; measureDock();
 }
 const focused = () => focusId && items.find(i => i.id === focusId);
 function step(n){
@@ -802,6 +815,7 @@ function update(dt){
     cam.tAngle += cam.vel * dt; cam.vel *= Math.exp(-dt * 3.2);
     if(cam.tAngle < 0) cam.tAngle += (0 - cam.tAngle) * ease(9);
     if(cam.tAngle > maxA) cam.tAngle += (maxA - cam.tAngle) * ease(9);
+    if(ROWS === 1) cam.tYOff += (HOME_Y - cam.tYOff) * ease(7);
   }
   cam.tAngle = Math.max(-0.5, Math.min(maxA + 0.5, cam.tAngle));
   cam.angle += (cam.tAngle - cam.angle) * ease(drag ? 30 : 7);
@@ -870,6 +884,7 @@ function wire(){
   const ta = $('prompt');
   const grow = () => { ta.style.height = 'auto'; ta.style.height = Math.min(ta.scrollHeight, 110) + 'px'; measureDock(); };
   ta.addEventListener('input', grow);
+  ta.addEventListener('blur', () => setTimeout(settleViewport, 60));
   ta.addEventListener('keydown', e => { if(e.key === 'Enter' && !e.shiftKey && !e.isComposing){ e.preventDefault(); generate(); } });
   document.querySelectorAll('.starters button').forEach(b => b.onclick = () => { ta.value = b.textContent; grow(); ta.focus(); });
   $('shape').value = store.get('shape', '1:1');
@@ -899,7 +914,7 @@ function wire(){
 
   // keep the dock above the on-screen keyboard
   if(window.visualViewport){
-    const vv = visualViewport, fit = () => document.documentElement.style.setProperty('--kb', Math.max(0, innerHeight - vv.height - vv.offsetTop) + 'px');
+    const vv = visualViewport, fit = () => { document.documentElement.style.setProperty('--kb', Math.max(0, innerHeight - vv.height - vv.offsetTop) + 'px'); if(document.activeElement !== ta) settleViewport(); };
     vv.addEventListener('resize', fit); vv.addEventListener('scroll', fit);
   }
   new ResizeObserver(measureDock).observe($('dock'));
