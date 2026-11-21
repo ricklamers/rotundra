@@ -32,7 +32,9 @@ button{cursor:pointer}
   background:linear-gradient(rgba(8,26,28,.72),rgba(8,26,28,0));pointer-events:none}
 .top h1{font-family:var(--serif);font-weight:400;font-size:30px;line-height:1;margin:0;letter-spacing:.01em}
 .top #count{font-size:13px;color:var(--mist)}
-.top button{margin-left:auto;pointer-events:auto}
+.top button{pointer-events:auto}
+.top #openArchive{margin-left:auto}
+.top{gap:10px}
 
 .quiet{background:rgba(8,26,28,.55);border:1px solid var(--line);border-radius:999px;padding:8px 14px;font-size:13px;
   -webkit-backdrop-filter:blur(12px);backdrop-filter:blur(12px)}
@@ -76,7 +78,7 @@ button{cursor:pointer}
 .placard-actions{display:flex;flex-wrap:wrap;gap:8px}
 .placard-actions>*{background:rgba(239,232,218,.08);border:1px solid transparent;border-radius:11px;padding:10px 13px;font-size:14px;text-decoration:none;color:var(--bone)}
 .placard-actions>*:hover{border-color:var(--line)}
-.placard-actions .danger{margin-left:auto;color:#ffb3a6}
+.placard-actions .danger{margin-left:auto}
 .placard-actions [aria-disabled="true"]{opacity:.4;pointer-events:none}
 
 #toast{position:fixed;left:50%;transform:translateX(-50%);bottom:calc(var(--dockh,220px) + var(--striph,0px) + 22px + var(--kb));
@@ -125,6 +127,18 @@ dialog li{display:flex;align-items:center;gap:8px}
 dialog li span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 dialog li button{margin-left:auto;background:none;border:0;color:var(--mist);text-decoration:underline;font-size:13px;padding:4px}
 dialog footer{display:flex;margin-top:22px}
+dialog .btn:disabled{opacity:.4;cursor:default}
+#archive{width:min(580px,calc(100% - 24px))}
+.arc-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(82px,1fr));gap:7px;max-height:46vh;overflow:auto;margin:14px -5px;padding:5px}
+.arc-grid:empty{display:none}
+.cell{position:relative;aspect-ratio:1;border:0;padding:0;border-radius:10px;overflow:hidden;background:var(--c) center/cover no-repeat}
+.cell img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover}
+.cell[aria-pressed="true"]{outline:3px solid var(--brass);outline-offset:1px}
+.cell[aria-pressed="true"]::after{content:"";position:absolute;right:6px;top:6px;width:20px;height:20px;border-radius:50%;
+  background:var(--brass) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 12'%3E%3Cpath d='M2.5 6.3l2.3 2.3 4.7-5' fill='none' stroke='%231c1606' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") center/12px no-repeat;
+  box-shadow:0 2px 6px rgba(0,0,0,.45)}
+.arc-actions{display:flex;flex-wrap:wrap;gap:8px}
+.arc-actions[hidden]{display:none}
 dialog footer .primary{padding:11px 22px}
 
 #nogpu{position:fixed;inset:0;display:grid;place-content:center;padding:28px;text-align:center;background:var(--ink)}
@@ -147,6 +161,7 @@ dialog footer .primary{padding:11px 22px}
 
 <header class="top">
   <h1>Rotunda</h1><span id="count"></span>
+  <button id="openArchive" class="quiet" type="button">Archive</button>
   <button id="openSettings" class="quiet" type="button">Settings</button>
 </header>
 
@@ -190,7 +205,7 @@ dialog footer .primary{padding:11px 22px}
     <button id="pNext" type="button">Next</button>
     <button id="pReuse" type="button">Use this prompt</button>
     <a id="pOpen" target="_blank" rel="noopener">Open full size</a>
-    <button id="pRemove" type="button" class="danger">Remove</button>
+    <button id="pRemove" type="button" class="danger">Archive</button>
   </div>
 </aside>
 
@@ -207,8 +222,21 @@ dialog footer .primary{padding:11px 22px}
   <ul id="mList"></ul>
 
   <h3>Gallery</h3>
-  <button class="btn warn" id="clearAll" type="button">Remove all images</button>
+  <button class="btn" id="clearAll" type="button">Archive all images</button>
   <footer><button class="primary" id="setDone" type="button" autofocus>Done</button></footer>
+</dialog>
+
+<dialog id="archive" aria-labelledby="arcTitle">
+  <h2 id="arcTitle">Archive</h2>
+  <p class="hint" id="arcHint"></p>
+  <div id="arcGrid" class="arc-grid"></div>
+  <div class="arc-actions" id="arcActions">
+    <button class="btn" id="arcAll" type="button">Select all</button>
+    <button class="btn" id="arcRestore" type="button">Restore</button>
+    <button class="btn warn" id="arcDelete" type="button">Delete forever</button>
+  </div>
+  <p class="hint" id="arcNote">Deleting removes an image from this browser for good. The copy fal stored is not affected.</p>
+  <footer><button class="primary" id="arcDone" type="button" autofocus>Done</button></footer>
 </dialog>
 
 <div id="nogpu" hidden>
@@ -601,13 +629,13 @@ function addItem(rec, fresh){
   }
   return it;
 }
-function removeItem(it){
+function removeItem(it, keepThumb){
   const i = items.indexOf(it); if(i < 0) return;
   items.splice(i, 1);
   if(focusId === it.id) unfocus();
   const dead = [it.tex, it.thumbTex, it.ltex, it.ubuf, it.lbuf]; it.tex = it.thumbTex = null;
   setTimeout(() => dead.forEach(r => r && r.destroy()), 200);   // after in-flight frames
-  if(thumbs[it.id]){ delete thumbs[it.id]; saveThumbs(); }
+  if(!keepThumb && thumbs[it.id]){ delete thumbs[it.id]; saveThumbs(); }
   save(); refreshCount(); stripDirty = true;
 }
 function save(){
@@ -754,6 +782,7 @@ function focus(it){
   $('pPrompt').textContent = it.prompt;
   const o = $('pOpen');
   if(it.url && !it.url.startsWith('data:')){ o.href = it.url; o.removeAttribute('aria-disabled'); } else { o.removeAttribute('href'); o.setAttribute('aria-disabled', 'true'); }
+  $('pRemove').textContent = it.url && !it.url.startsWith('data:') ? 'Archive' : 'Remove';
   measureDock();
 }
 function unfocus(){
@@ -982,6 +1011,61 @@ function frame(now){
 }
 
 /* ---------------------------------------------------------------- settings + wiring */
+/* archive: images taken off the wall but kept, until they are deleted for good */
+let archive = store.get('archive', []).filter(r => r && r.id && r.url);
+const arcSel = new Set(); let arcArmed = false;
+const plural = n => n === 1 ? '1 image' : n + ' images';
+function showArchiveCount(){ $('openArchive').textContent = archive.length ? `Archive ${archive.length}` : 'Archive'; }
+function saveArchive(){ store.set('archive', archive); showArchiveCount(); }
+function archiveItem(it){
+  if(!it.url || it.url.startsWith('data:')){ removeItem(it); return false; }   // nothing lasting to keep
+  const {id, prompt, modelId, modelName, color, url, aspect, t} = it;
+  archive.push({id, prompt, modelId, modelName, color, url, aspect, t, at:Date.now()});
+  removeItem(it, true); saveArchive(); return true;
+}
+function restoreArchived(ids){
+  const back = archive.filter(r => ids.has(r.id));
+  archive = archive.filter(r => !ids.has(r.id));
+  for(const {at, ...rec} of back) addItem(rec, true);
+  items.sort((a, b) => a.t - b.t);                 // back to where they hung, by date
+  stripDirty = true; save(); saveArchive();
+  return back.length;
+}
+function deleteArchived(ids){
+  const n = archive.filter(r => ids.has(r.id)).length;
+  archive = archive.filter(r => !ids.has(r.id));
+  for(const id of ids) delete thumbs[id];
+  saveThumbs(); saveArchive();
+  return n;
+}
+function renderArchive(){
+  const grid = $('arcGrid'); grid.textContent = '';
+  for(const id of [...arcSel]) if(!archive.some(r => r.id === id)) arcSel.delete(id);
+  for(const rec of [...archive].sort((a, b) => b.at - a.at)){
+    const b = document.createElement('button'); b.type = 'button'; b.className = 'cell';
+    b.style.setProperty('--c', rec.color);
+    if(thumbs[rec.id]) b.style.backgroundImage = `url("${thumbs[rec.id]}")`;
+    b.setAttribute('aria-pressed', arcSel.has(rec.id));
+    b.setAttribute('aria-label', `${rec.modelName}: ${rec.prompt.slice(0, 80)}`); b.title = rec.prompt;
+    const im = new Image(); im.alt = ''; im.loading = 'lazy'; im.decoding = 'async'; im.onerror = () => im.remove(); im.src = rec.url;
+    b.append(im);
+    b.onclick = () => { arcSel.has(rec.id) ? arcSel.delete(rec.id) : arcSel.add(rec.id); b.setAttribute('aria-pressed', arcSel.has(rec.id)); arcArmed = false; archiveButtons(); };
+    grid.append(b);
+  }
+  const n = archive.length;
+  $('arcHint').textContent = n ? `${plural(n)} off the wall. Tap the ones you want to restore or delete.` : 'Nothing archived. Open an image on the wall and choose Archive.';
+  $('arcActions').hidden = $('arcNote').hidden = !n;
+  archiveButtons();
+}
+function archiveButtons(){
+  const n = arcSel.size;
+  $('arcAll').textContent = n && n === archive.length ? 'Select none' : 'Select all';
+  $('arcRestore').disabled = $('arcDelete').disabled = !n;
+  $('arcRestore').textContent = n ? `Restore ${n}` : 'Restore';
+  $('arcDelete').textContent = arcArmed ? `Tap again to delete ${plural(n)}` : n ? `Delete ${n} forever` : 'Delete forever';
+}
+function openArchive(){ arcSel.clear(); arcArmed = false; renderArchive(); $('archive').showModal(); }
+
 function openSettings(){ $('key').value = getKey(); $('key').type = 'password'; $('keyShow').textContent = 'Show'; renderCustom(); resetClear(); $('settings').showModal(); }
 function renderCustom(){
   const ul = $('mList'); ul.textContent = '';
@@ -994,7 +1078,7 @@ function renderCustom(){
   }
 }
 let clearArmed = false;
-function resetClear(){ clearArmed = false; $('clearAll').textContent = 'Remove all images'; }
+function resetClear(){ clearArmed = false; $('clearAll').textContent = 'Archive all images'; }
 function fatal(msg){ $('nogpuMsg').textContent = msg; $('nogpu').querySelector('h2').textContent = 'The gallery stopped'; $('nogpu').hidden = false; }
 
 function wire(){
@@ -1012,7 +1096,22 @@ function wire(){
   $('pPrev').onclick = () => step(-1);
   $('pNext').onclick = () => step(1);
   $('pReuse').onclick = () => { const f = focused(); if(f){ ta.value = f.prompt; unfocus(); grow(); ta.focus(); } };
-  $('pRemove').onclick = () => { const f = focused(); if(f){ removeItem(f); toast('Image removed'); } };
+  $('pRemove').onclick = () => {
+    const f = focused(); if(!f) return;
+    const i = items.indexOf(f), kept = archiveItem(f);
+    const next = items[Math.min(i, items.length - 1)];      // stay close up on the neighbour, for quick sorting
+    if(next) focus(next);
+    toast(kept ? 'Image archived' : 'Image removed');
+  };
+  $('openArchive').onclick = openArchive;
+  $('arcDone').onclick = () => $('archive').close();
+  $('arcAll').onclick = () => { const all = arcSel.size === archive.length; arcSel.clear(); if(!all) archive.forEach(r => arcSel.add(r.id)); arcArmed = false; renderArchive(); };
+  $('arcRestore').onclick = () => { const n = restoreArchived(new Set(arcSel)); arcSel.clear(); renderArchive(); toast(`${plural(n)} restored`); };
+  $('arcDelete').onclick = () => {
+    if(!arcSel.size) return;
+    if(!arcArmed){ arcArmed = true; archiveButtons(); return; }
+    const n = deleteArchived(new Set(arcSel)); arcSel.clear(); arcArmed = false; renderArchive(); toast(`${plural(n)} deleted`);
+  };
 
   $('openSettings').onclick = openSettings;
   $('keyShow').onclick = () => { const k = $('key'), show = k.type === 'password'; k.type = show ? 'text' : 'password'; $('keyShow').textContent = show ? 'Hide' : 'Show'; };
@@ -1025,8 +1124,8 @@ function wire(){
   };
   $('clearAll').onclick = () => {
     if(!items.length) return;
-    if(!clearArmed){ clearArmed = true; $('clearAll').textContent = `Tap again to remove ${items.length === 1 ? '1 image' : items.length + ' images'}`; return; }
-    [...items].forEach(removeItem); cam.tAngle = 0; resetClear();
+    if(!clearArmed){ clearArmed = true; $('clearAll').textContent = `Tap again to archive ${plural(items.length)}`; return; }
+    const n = items.length; [...items].forEach(it => archiveItem(it)); cam.tAngle = 0; resetClear(); toast(`${plural(n)} archived`);
   };
   $('setDone').onclick = () => { $('key').onchange({target:$('key')}); $('settings').close(); };
 
@@ -1049,7 +1148,8 @@ async function start(){
   // wall labels are drawn with the page fonts, so wait briefly for them
   try{ await Promise.race([Promise.all([document.fonts.load('600 30px "Schibsted Grotesk"'), document.fonts.load('italic 40px "Instrument Serif"')]), new Promise(r => setTimeout(r, 1500))]); }catch(e){}
   for(const rec of store.get('items', [])) if(rec && rec.url) addItem(rec, false);
-  for(const id of Object.keys(thumbs)) if(!items.some(i => i.id === id)) delete thumbs[id];
+  for(const id of Object.keys(thumbs)) if(!items.some(i => i.id === id) && !archive.some(r => r.id === id)) delete thumbs[id];
+  showArchiveCount();
   refreshCount(); resize();
   cam.angle = cam.tAngle = Math.max(0, colOf(items.length - 1)) * DTH;
   cam.dist = cam.tDist; cam.shift = cam.tShift;
