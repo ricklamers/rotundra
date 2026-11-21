@@ -79,10 +79,24 @@ button{cursor:pointer}
 .placard-actions .danger{margin-left:auto;color:#ffb3a6}
 .placard-actions [aria-disabled="true"]{opacity:.4;pointer-events:none}
 
-#toast{position:fixed;left:50%;transform:translateX(-50%);bottom:calc(var(--dockh,220px) + 22px + var(--kb));
+#toast{position:fixed;left:50%;transform:translateX(-50%);bottom:calc(var(--dockh,220px) + var(--striph,0px) + 22px + var(--kb));
   width:max-content;max-width:min(680px,calc(100% - 28px));background:rgba(8,26,28,.9);border:1px solid var(--line);
   border-radius:12px;padding:10px 14px;font-size:14px;line-height:1.35;opacity:0;transition:opacity .25s;pointer-events:none}
 #toast.show{opacity:1}
+
+/* filmstrip scrubber: flick it to fly through the whole gallery */
+.strip{position:fixed;left:50%;transform:translateX(-50%);width:min(720px,calc(100% - 20px));height:50px;
+  bottom:calc(max(10px,env(safe-area-inset-bottom)) + var(--kb) + var(--dockh,220px) + 6px);
+  overflow-x:auto;overflow-y:hidden;scroll-snap-type:x mandatory;scrollbar-width:none;-webkit-overflow-scrolling:touch;
+  overscroll-behavior:contain;touch-action:pan-x;
+  -webkit-mask-image:linear-gradient(90deg,transparent,#000 22%,#000 78%,transparent);mask-image:linear-gradient(90deg,transparent,#000 22%,#000 78%,transparent)}
+.strip[hidden]{display:none}
+.strip::-webkit-scrollbar{display:none}
+.track{display:flex;align-items:center;height:100%;width:max-content;padding:0 calc(50% - 17px)}
+.tick{flex:none;width:30px;height:38px;margin:0 2px;padding:0;border:0;border-radius:6px;scroll-snap-align:center;
+  background:var(--c) center/cover no-repeat;opacity:.5;transition:opacity .12s,transform .12s}
+.tick.bare{background-image:linear-gradient(rgba(8,26,28,.62),rgba(8,26,28,.62))}
+.tick.on{opacity:1;transform:scale(1.2);box-shadow:0 0 0 2px var(--bone),0 4px 14px rgba(0,0,0,.5)}
 #toast.bad{border-color:rgba(255,150,130,.55)}
 
 .empty{position:fixed;left:0;right:0;top:20%;padding:0 24px;text-align:center;pointer-events:none}
@@ -125,7 +139,7 @@ dialog footer .primary{padding:11px 22px}
   .shape span{position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%)}
   .placard-actions .danger{margin-left:0}
 }
-@media (prefers-reduced-motion:reduce){ #toast{transition:none} }
+@media (prefers-reduced-motion:reduce){ #toast,.tick{transition:none} }
 </style>
 </head>
 <body>
@@ -147,6 +161,8 @@ dialog footer .primary{padding:11px 22px}
 </section>
 
 <div id="toast" role="status" aria-live="polite"></div>
+
+<nav id="strip" class="strip" hidden aria-label="Jump through the images"><div id="track" class="track"></div></nav>
 
 <form id="dock" class="panel dock" autocomplete="off">
   <div class="models" id="models" role="group" aria-label="Models to generate with"></div>
@@ -278,12 +294,24 @@ function refreshCount(){
   $('empty').hidden = n > 0;
 }
 function bottomPanel(){ return focusId ? $('placard') : $('dock'); }
+let kbPx = 0, lastDockH = -1;
+function readKeyboard(){                          // how much of the page the on-screen keyboard covers
+  const vv = window.visualViewport; if(!vv) return 0;
+  kbPx = Math.max(0, document.documentElement.clientHeight - vv.height - vv.offsetTop);
+  document.documentElement.style.setProperty('--kb', kbPx + 'px');
+  return kbPx;
+}
 function measureDock(){
-  const h = bottomPanel().getBoundingClientRect().height || 0;
-  document.documentElement.style.setProperty('--dockh', h + 'px');
-  const H = Math.max(1, innerHeight), bottom = h + 14, top = $('count').getBoundingClientRect().bottom + 12;
-  cam.tShift = (bottom - top) / H; cam.use = Math.max(0.3, 1 - (bottom + top) / H);
-  if(autoDist && canvas.clientHeight){ cam.userDist = defaultDist(); if(!focusId) cam.tDist = cam.userDist; }
+  const pr = bottomPanel().getBoundingClientRect(), cr = canvas.getBoundingClientRect();
+  if(pr.height !== lastDockH){ lastDockH = pr.height; document.documentElement.style.setProperty('--dockh', pr.height + 'px'); }
+  if(kbPx > 30 || !cr.height) return;             // keyboard up: keep the framing we had
+  // insets are taken relative to the canvas, so a scrolled or resized page cannot skew them
+  const gap = Math.max(0, Math.min(60, cr.bottom - pr.bottom));
+  const bottom = pr.height + gap + ($('strip').hidden ? 0 : 56) + 12;
+  const top = Math.max(0, Math.min(cr.height * 0.25, $('count').getBoundingClientRect().bottom - cr.top)) + 12;
+  cam.tShift = Math.max(-0.1, Math.min(0.6, (bottom - top) / cr.height));
+  cam.use = Math.max(0.3, 1 - (bottom + top) / cr.height);
+  if(autoDist){ cam.userDist = defaultDist(); if(!focusId) cam.tDist = cam.userDist; }
 }
 
 /* ---------------------------------------------------------------- tiny vector / matrix helpers */
@@ -553,11 +581,11 @@ function setSize(it, aspect){
 }
 function rebind(it){
   it.bg = device.createBindGroup({layout:iLayout, entries:[
-    {binding:0, resource:{buffer:it.ubuf}}, {binding:1, resource:(it.tex || blankTex).createView()}, {binding:2, resource:sampler}]});
+    {binding:0, resource:{buffer:it.ubuf}}, {binding:1, resource:(it.tex || it.thumbTex || blankTex).createView()}, {binding:2, resource:sampler}]});
 }
 function addItem(rec, fresh){
   const it = { ...rec, state:rec.url ? 'ok' : 'busy', appear:fresh ? 0 : 1, loaded:0, hover:0, seed:Math.random(),
-    rgb:hexRGB(rec.color), tex:null, fetching:false, failedLoad:false,
+    rgb:hexRGB(rec.color), tex:null, thumbTex:null, thumb:'', tick:null, fetching:false, failedLoad:false,
     u:new Float32Array(16), lu:new Float32Array(16) };
   setSize(it, rec.aspect || 1);
   it.ubuf = device.createBuffer({size:64, usage:GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST});
@@ -566,16 +594,21 @@ function addItem(rec, fresh){
   it.lbg = device.createBindGroup({layout:iLayout, entries:[
     {binding:0, resource:{buffer:it.lbuf}}, {binding:1, resource:it.ltex.createView()}, {binding:2, resource:sampler}]});
   rebind(it);
-  items.push(it); refreshCount();
+  items.push(it); refreshCount(); stripDirty = true;
+  if(thumbs[it.id]){                              // saved thumbnail: show it straight away
+    it.thumb = thumbs[it.id];
+    const im = new Image(); im.onload = () => { if(items.includes(it)) setThumb(it, im, im.naturalWidth, im.naturalHeight); }; im.src = it.thumb;
+  }
   return it;
 }
 function removeItem(it){
   const i = items.indexOf(it); if(i < 0) return;
   items.splice(i, 1);
   if(focusId === it.id) unfocus();
-  const dead = [it.tex, it.ltex, it.ubuf, it.lbuf]; it.tex = null;
+  const dead = [it.tex, it.thumbTex, it.ltex, it.ubuf, it.lbuf]; it.tex = it.thumbTex = null;
   setTimeout(() => dead.forEach(r => r && r.destroy()), 200);   // after in-flight frames
-  save(); refreshCount();
+  if(thumbs[it.id]){ delete thumbs[it.id]; saveThumbs(); }
+  save(); refreshCount(); stripDirty = true;
 }
 function save(){
   store.set('items', items.filter(i => i.state === 'ok' && i.url && !i.url.startsWith('data:'))
@@ -583,6 +616,17 @@ function save(){
 }
 
 /* image → texture, a few at a time */
+let thumbs = store.get('thumbs', {}), thumbTimer = 0;
+function saveThumbs(){ clearTimeout(thumbTimer); thumbTimer = setTimeout(() => store.set('thumbs', thumbs), 500); }
+function setThumb(it, src, w, h){
+  const k = 64 / Math.max(w, h), c = document.createElement('canvas');
+  c.width = Math.max(1, Math.round(w * k)); c.height = Math.max(1, Math.round(h * k));
+  const g = c.getContext('2d', {willReadFrequently:true}); g.drawImage(src, 0, 0, c.width, c.height);
+  if(!it.thumb){ try{ it.thumb = c.toDataURL('image/jpeg', 0.6); thumbs[it.id] = it.thumb; saveThumbs(); }catch(e){} }
+  if(!it.thumbTex){ it.thumbTex = textureFrom(c, c.width, c.height, false); if(!it.tex) rebind(it); }
+  if(it.tick) paintTick(it.tick, it);
+}
+const isNear = it => it.a == null || Math.abs(it.a - cam.angle) / DTH < FAR_COLS;
 let loading = 0; const loadQueue = [];
 function wantTexture(it){
   if(it.tex || it.fetching || it.failedLoad || !it.url) return;
@@ -590,12 +634,16 @@ function wantTexture(it){
 }
 function pump(){
   while(loading < 3 && loadQueue.length){
-    const it = loadQueue.shift(); loading++;
+    const it = loadQueue.shift();
+    if(it.thumbTex && !isNear(it)){ it.fetching = false; continue; }   // scrubbed past it: the thumbnail will do
+    loading++;
     loadBitmap(it.url).then(bmp => {
       if(!items.includes(it)){ bmp.close(); return; }
       setSize(it, bmp.width / bmp.height);
-      it.tex = textureFrom(bmp, bmp.width, bmp.height, false); bmp.close(); rebind(it);
-    }).catch(() => { it.failedLoad = true; if(it.state === 'ok') it.state = 'failed';
+      setThumb(it, bmp, bmp.width, bmp.height);
+      if(isNear(it)){ it.tex = textureFrom(bmp, bmp.width, bmp.height, false); rebind(it); }
+      bmp.close();
+    }).catch(() => { it.failedLoad = true; if(it.state === 'ok' && !it.thumbTex) it.state = 'failed';
       if(it.fresh) toast(`${it.modelName} made an image, but it could not be loaded onto the wall. Open it from the image's label instead.`, true);
     }).finally(() => { it.fetching = false; loading--; pump(); });
   }
@@ -714,6 +762,70 @@ function unfocus(){
   cam.tDist = cam.userDist; cam.tYOff = HOME_Y; measureDock();
 }
 const focused = () => focusId && items.find(i => i.id === focusId);
+const PITCH = 34;                                 // tick width + gap, matches the CSS
+let stripIdx = -1, stripDirty = true, stripDriving = false, stripTouch = false, stripTimer = 0;
+function paintTick(el, it){
+  el.style.setProperty('--c', it.color);
+  el.style.backgroundImage = it.thumb ? `url("${it.thumb}")` : '';
+  el.classList.toggle('bare', !it.thumb);
+}
+function renderStrip(){
+  stripDirty = false;
+  const strip = $('strip'), track = $('track'), show = items.length > 1;
+  if(strip.hidden === show){
+    strip.hidden = !show; document.documentElement.style.setProperty('--striph', show ? '56px' : '0px'); measureDock();
+  }
+  while(track.children.length > items.length) track.lastChild.remove();
+  items.forEach((it, i) => {
+    let el = track.children[i];
+    if(!el){ el = document.createElement('button'); el.type = 'button'; el.className = 'tick'; el.tabIndex = -1; track.append(el); }
+    el.classList.remove('on'); el.dataset.i = i;
+    el.setAttribute('aria-label', `Image ${i + 1}: ${it.prompt.slice(0, 60)}`);
+    paintTick(el, it); it.tick = el;
+  });
+  stripIdx = -1;
+}
+function currentIndex(){
+  const f = focused(); if(f) return items.indexOf(f);
+  const col = Math.round(cam.tAngle / DTH), row = stripIdx >= 0 && colOf(stripIdx) === col ? stripIdx % ROWS : 0;
+  return Math.max(0, Math.min(items.length - 1, col * ROWS + row));
+}
+function markTick(i){
+  const kids = $('track').children;
+  if(kids[stripIdx]) kids[stripIdx].classList.remove('on');
+  stripIdx = i; if(kids[i]) kids[i].classList.add('on');
+}
+function snapTo(i){                               // jump the camera to an image with no travel
+  const it = items[i]; if(!it) return;
+  if(focusId && focusId !== it.id) focus(it);
+  cam.tAngle = cam.angle = colOf(i) * DTH; cam.vel = 0; cam.tYOff = focusId ? cam.tYOff : HOME_Y;
+}
+function syncStrip(){                             // when the wall moves by other means, the strip follows
+  if(stripDirty) renderStrip();
+  const strip = $('strip'); if(strip.hidden || stripDriving) return;
+  const i = currentIndex();
+  if(i !== stripIdx){ markTick(i); strip.scrollLeft = i * PITCH; }
+}
+function wireStrip(){
+  const strip = $('strip');
+  const settle = ms => { clearTimeout(stripTimer); stripTimer = setTimeout(() => { if(!stripTouch) stripDriving = false; }, ms); };
+  strip.addEventListener('scroll', () => {
+    if(!stripDriving) return;
+    const i = Math.max(0, Math.min(items.length - 1, Math.round(strip.scrollLeft / PITCH)));
+    if(i !== stripIdx){ markTick(i); snapTo(i); }
+    settle(220);
+  }, {passive:true});
+  strip.addEventListener('touchstart', () => { stripTouch = true; stripDriving = true; clearTimeout(stripTimer); }, {passive:true});
+  const lift = () => { stripTouch = false; settle(260); };
+  strip.addEventListener('touchend', lift, {passive:true});
+  strip.addEventListener('touchcancel', lift, {passive:true});
+  strip.addEventListener('wheel', () => { stripDriving = true; settle(260); }, {passive:true});
+  $('track').addEventListener('click', e => {
+    const t = e.target.closest('.tick'); if(!t) return;
+    const i = +t.dataset.i; markTick(i); snapTo(i); strip.scrollLeft = i * PITCH;
+  });
+}
+
 function step(n){
   const f = focused(); if(!f){ cam.tAngle += n * DTH; cam.vel = 0; return; }
   const j = items.indexOf(f) + n; if(j >= 0 && j < items.length) focus(items[j]);
@@ -777,7 +889,7 @@ addEventListener('keydown', e => {
 });
 
 /* ---------------------------------------------------------------- frame loop */
-let last = 0, cssW = 0, cssH = 0;
+let last = 0, cssW = 0, cssH = 0, frameNo = 0;
 function resize(){
   const dpr = Math.min(devicePixelRatio || 1, 2);
   cssW = canvas.clientWidth; cssH = canvas.clientHeight;
@@ -799,15 +911,19 @@ function update(dt){
     it.a += (ta - it.a) * ease(8); it.y += (ty - it.y) * ease(8);
     it.sx += (it.tsx - it.sx) * ease(8); it.sy += (it.tsy - it.sy) * ease(8);
     it.appear += (1 - it.appear) * ease(4.5);
-    it.loaded += ((it.tex ? 1 : 0) - it.loaded) * ease(3.5);
+    it.loaded += ((it.tex || it.thumbTex ? 1 : 0) - it.loaded) * ease(it.tex ? 3.5 : 9);
     it.hover += ((it.id === hoverId || it.id === focusId ? 1 : 0) - it.hover) * ease(12);
     // keep full textures only for the stretch of wall you are near
     const far = Math.abs(it.a - cam.angle) / DTH;
     if(it.state === 'ok'){
       if(far < NEAR_COLS) wantTexture(it);
-      else if(far > FAR_COLS && it.tex && it.loaded > 0.99){ const t = it.tex; it.tex = null; it.loaded = 0; rebind(it); setTimeout(() => t.destroy(), 200); }
+      else if(far > FAR_COLS && it.tex && it.loaded > 0.99){ const t = it.tex; it.tex = null; it.loaded = it.thumbTex ? 1 : 0; rebind(it); setTimeout(() => t.destroy(), 200); }
     }
   });
+  if(!loading && !loadQueue.length){              // idle: quietly make thumbnails for images that have none yet
+    const t = items.find(i => i.state === 'ok' && i.url && !i.thumb && !i.failedLoad && !i.fetching);
+    if(t) wantTexture(t);
+  }
 
   const f = focused();
   if(f){ cam.tAngle = f.a; cam.tYOff = f.y - helixY(f.a) - 0.12; cam.tDist = fitDist(f); }
@@ -827,7 +943,9 @@ function update(dt){
 function frame(now){
   const dt = Math.min(0.05, (now - last) / 1000 || 0.016); last = now;
   if(canvas.clientWidth !== cssW || canvas.clientHeight !== cssH) resize();
+  if(++frameNo % 20 === 0){ readKeyboard(); measureDock(); }     // re-check the layout so a stale measurement cannot stick
   update(dt);
+  syncStrip();
 
   const asp = canvas.width / canvas.height, eye = camEye();
   gData.set(viewProj(eye, dirOf(cam.angle), asp, cam.shift), 0);
@@ -884,7 +1002,7 @@ function wire(){
   const ta = $('prompt');
   const grow = () => { ta.style.height = 'auto'; ta.style.height = Math.min(ta.scrollHeight, 110) + 'px'; measureDock(); };
   ta.addEventListener('input', grow);
-  ta.addEventListener('blur', () => setTimeout(settleViewport, 60));
+  ta.addEventListener('blur', () => setTimeout(() => { settleViewport(); readKeyboard(); measureDock(); }, 60));
   ta.addEventListener('keydown', e => { if(e.key === 'Enter' && !e.shiftKey && !e.isComposing){ e.preventDefault(); generate(); } });
   document.querySelectorAll('.starters button').forEach(b => b.onclick = () => { ta.value = b.textContent; grow(); ta.focus(); });
   $('shape').value = store.get('shape', '1:1');
@@ -914,10 +1032,11 @@ function wire(){
 
   // keep the dock above the on-screen keyboard
   if(window.visualViewport){
-    const vv = visualViewport, fit = () => { document.documentElement.style.setProperty('--kb', Math.max(0, innerHeight - vv.height - vv.offsetTop) + 'px'); if(document.activeElement !== ta) settleViewport(); };
+    const vv = visualViewport, fit = () => { readKeyboard(); if(document.activeElement !== ta) settleViewport(); measureDock(); };
     vv.addEventListener('resize', fit); vv.addEventListener('scroll', fit);
   }
   new ResizeObserver(measureDock).observe($('dock'));
+  wireStrip();
 }
 
 async function start(){
@@ -930,6 +1049,7 @@ async function start(){
   // wall labels are drawn with the page fonts, so wait briefly for them
   try{ await Promise.race([Promise.all([document.fonts.load('600 30px "Schibsted Grotesk"'), document.fonts.load('italic 40px "Instrument Serif"')]), new Promise(r => setTimeout(r, 1500))]); }catch(e){}
   for(const rec of store.get('items', [])) if(rec && rec.url) addItem(rec, false);
+  for(const id of Object.keys(thumbs)) if(!items.some(i => i.id === id)) delete thumbs[id];
   refreshCount(); resize();
   cam.angle = cam.tAngle = Math.max(0, colOf(items.length - 1)) * DTH;
   cam.dist = cam.tDist; cam.shift = cam.tShift;
